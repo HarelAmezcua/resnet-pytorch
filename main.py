@@ -1,14 +1,13 @@
 import sys
+import os
 sys.path.append('..\\')
-import numpy as np
-import albumentations as A
-from src.utils import My_Resnet, My_Dataset
 import torch
-import torch.multiprocessing as mp
+import multiprocessing as mp
 from torchvision import transforms
 import csv
-import os
-import albumentations as A  
+
+from src.utils import My_Resnet, My_Dataset
+
 
 def train_one_epoch(model, dataloader, optimizer, criterion, device):
     model.train()
@@ -17,9 +16,10 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device):
         images, labels = batch
         images, labels = images.to(device), labels.to(device)
         
-        optimizer.zero_grad()
         outputs = model(images)
         loss = criterion(outputs, labels)
+
+        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         print(f"Loss: {loss.item()}")  
@@ -38,13 +38,15 @@ def train_model(num_epochs=10):
     ])
     
     # Create your dataset
-    dataset = My_Dataset(r'C:\github\resnet-pytorch\dataset_2', transform)
+    train_dataset = My_Dataset(r'C:\github\resnet-pytorch\dataset\train', transform)
+    val_dataset = My_Dataset(r'C:\github\resnet-pytorch\dataset\val',transform=transform)
+
 
     # Create DataLoader with multiple workers
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset,
         batch_size=64,
-        num_workers=2,  # Adjust to your system
+        num_workers=2,  
         shuffle=True,
         pin_memory=True,
         persistent_workers=True
@@ -66,7 +68,7 @@ def train_model(num_epochs=10):
 
     # Training loop
     for epoch in range(num_epochs):
-        loss = train_one_epoch(model, dataloader, optimizer, criterion, device)
+        loss = train_one_epoch(model, train_dataloader, optimizer, criterion, device)
         
         # Save loss to csv
         with open(csv_file, 'a', newline='') as f:
@@ -89,7 +91,7 @@ def test_dataset_item():
     dataset = My_Dataset(r'C:\github\resnet-pytorch\dataset_2', transform)
     image, label = dataset[0]
 
-    # Comparing the network output shape with the label    
+    # Comparing the network output shape with the label
     model = My_Resnet()
     output = model(image.unsqueeze(0))
     print("Output: ",output.shape)    
@@ -98,4 +100,3 @@ def test_dataset_item():
 if __name__ == '__main__':
     mp.freeze_support()  # Needed for Windows multiprocessing
     train_model(num_epochs=50)
-    #test_dataset_item()#

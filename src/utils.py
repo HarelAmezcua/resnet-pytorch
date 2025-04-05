@@ -1,9 +1,7 @@
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import resnet18
 
-from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 from PIL import Image
 import os
@@ -27,7 +25,7 @@ class My_Dataset(Dataset):
         self.file_list = []
         self.labels = []
         
-        for class_idx, class_name in enumerate(self.classes):
+        for class_idx, class_name in enumerate(self.classes): # 
             class_path = os.path.join(root_dir, class_name)
             files = os.listdir(class_path)
             self.file_list.extend([os.path.join(class_name, f) for f in files])
