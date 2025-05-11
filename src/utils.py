@@ -7,6 +7,11 @@ from PIL import Image
 import os
 import numpy as np
 
+import albumentations as A
+import cv2
+
+
+
 class My_Resnet(nn.Module):
     def __init__(self):
         super(My_Resnet, self).__init__()
@@ -14,12 +19,12 @@ class My_Resnet(nn.Module):
         self.resnet.fc = nn.Linear(self.resnet.fc.in_features, 2)
 
     def forward(self, x):
-        return self.resnet(x)              
+        return self.resnet(x)
 
 class My_Dataset(Dataset):
-    def __init__(self, root_dir, transform=None):
+    def __init__(self, root_dir):
         self.root_dir = root_dir
-        self.transform = transform
+        self.transform = self.get_custom_transforms()
         self.classes = os.listdir(root_dir)
         self.num_classes = len(self.classes)
         self.file_list = []
@@ -45,3 +50,11 @@ class My_Dataset(Dataset):
         label = self.labels[idx]
         
         return image, label
+    
+    @staticmethod
+    def get_custom_transforms():
+        return A.Compose([
+            A.Resize(224, 224),
+            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            A.pytorch.ToTensorV2()
+        ])
