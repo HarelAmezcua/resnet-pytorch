@@ -1,94 +1,130 @@
 import sys
 import os
-sys.path.append('..\\')
 import torch
-import multiprocessing as mp
-from torchvision import transforms
+import numpy as np
+import random
 import csv
-from tdqm import tqdm
-
+from tqdm import tqdm
+import multiprocessing as mp
+from torch.utils.data import DataLoader
 from src.utils import My_Resnet, My_Dataset
+os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
+
+
+def set_seed(seed=42):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 
 def train_one_epoch(model, dataloader, optimizer, criterion, device):
     model.train()
-    for batch in dataloader:
-        # Example: batch could be (images, labels)
-        images, labels = batch
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    for images, labels in tqdm(dataloader, desc="Training", leave=False):
         images, labels = images.to(device), labels.to(device)
-        
         outputs = model(images)
         loss = criterion(outputs, labels)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        print(f"Loss: {loss.item()}")  
 
-    return loss.item()
+        running_loss += loss.item() * images.size(0)
+        _, preds = torch.max(outputs, 1)
 
-def train_model(num_epochs=10):
-    # Device setup
+        if labels.ndim > 1:
+            _, targets = torch.max(labels, 1)
+        else:
+            targets = labels
+
+        correct += (preds == targets).sum().item()
+        total += images.size(0)
+
+    avg_loss = running_loss / total
+    accuracy = correct / total
+    return avg_loss, accuracy
+
+
+
+def evaluate(model, dataloader, criterion, device):
+    model.eval()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for images, labels in tqdm(dataloader, desc="Validation", leave=False):
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+
+            running_loss += loss.item() * images.size(0)
+            _, preds = torch.max(outputs, 1)
+
+            correct += (preds == labels).sum().item()
+            total += images.size(0)
+
+    avg_loss = running_loss / total
+    accuracy = correct / total
+    return avg_loss, accuracy
+
+
+
+def train_model(num_epochs=50, patience=10):
+    set_seed()
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # Create your dataset
-    train_dataset = My_Dataset(r'C:\github\resnet-pytorch\dataset\train')
-    val_dataset = My_Dataset(r'C:\github\resnet-pytorch\dataset\val')
 
+    train_dataset = My_Dataset(r'C:\github\resnet-pytorch\dataset\train', type='train')
+    val_dataset = My_Dataset(r'C:\github\resnet-pytorch\dataset\val', type='val')
 
-    # Create DataLoader with multiple workers
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=64,
-        num_workers=2,  
-        shuffle=True,
-        pin_memory=True,
-        persistent_workers=True
-    )
+    train_loader = DataLoader(train_dataset, batch_size=64, num_workers=2, shuffle=True,
+                              pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(val_dataset, batch_size=64, num_workers=2, shuffle=False,
+                            pin_memory=True, persistent_workers=True)
 
-    # Create model, move to device
     model = My_Resnet().to(device)
-
-    # Example optimizer, loss
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
     criterion = torch.nn.CrossEntropyLoss()
 
-    # Create or check for csv file
-    csv_file = 'training_loss.csv'
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+
+    csv_file = 'training_log.csv'
     if not os.path.exists(csv_file):
         with open(csv_file, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['epoch', 'loss'])
+            writer.writerow(['epoch', 'train_loss', 'train_acc', 'val_loss', 'val_acc'])
 
-    # Training loop
     for epoch in range(num_epochs):
-        loss = train_one_epoch(model, train_dataloader, optimizer, criterion, device)
-        
-        # Save loss to csv
+        print(f"Epoch {epoch + 1}/{num_epochs}")
+        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
+        val_loss, val_acc = evaluate(model, val_loader, criterion, device)
+
         with open(csv_file, 'a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([epoch + 1, loss])
-            
-        # Optionally print or log training metrics
-        print(f"Finished epoch {epoch + 1}")
+            writer.writerow([epoch + 1, train_loss, train_acc, val_loss, val_acc])
 
+        print(f"Train Loss: {train_loss:.4f}, Acc: {train_acc:.4f} | Val Loss: {val_loss:.4f}, Acc: {val_acc:.4f}")
 
-def test_dataset_item():
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                            std=[0.229, 0.224, 0.225])
-    ])
-    
-    dataset = My_Dataset(r'C:\github\resnet-pytorch\dataset_2', transform)
-    image, label = dataset[0]
+        # Early stopping and checkpointing
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            epochs_no_improve = 0
+            torch.save(model.state_dict(), 'best_model.pth')
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print("Early stopping due to no improvement.")
+                break
 
-    # Comparing the network output shape with the label
-    model = My_Resnet()
-    output = model(image.unsqueeze(0))
-    print("Output: ",output.shape)    
-    print("Original",image.shape, label.shape)
 
 if __name__ == '__main__':
-    mp.freeze_support()  # Needed for Windows multiprocessing
+    mp.freeze_support()
     train_model(num_epochs=50)
